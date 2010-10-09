@@ -49,7 +49,7 @@ class ToolbarComponent extends Object {
  *
  * @var array
  */
-	var $_defaultPanels = array('history', 'session', 'request', 'sqlLog', 'timer', 'log', 'variables');
+	var $_defaultPanels = array('history', 'session', 'request', 'sqlLog', 'timer', 'log', 'variables','xhprof');
 /**
  * Loaded panel objects.
  *
@@ -633,6 +633,120 @@ class DebugKitLogListener {
 			$this->logs[$type] = array();
 		}
 		$this->logs[$type][] = array(date('Y-m-d H:i:s'), $message);
+	}
+}
+
+
+/**
+ * XHProf Panel - View XHProf Profile result.
+ *
+ * @package       cake.debug_kit.panels
+ */
+class XhprofPanel extends DebugPanel{
+	var $plugin = 'debug_kit';
+	
+	var $_configs = array(
+	    'sortBy'=>'wt', // ct, wt, cpu, mu, pmu
+	);
+/**
+ * Constructor - sets up the log listener.
+ *
+ * @return void
+ */
+	function __construct($settings) {
+	    foreach($settings['xhprof']['configs'] as $k => $v) {
+	        $this->_configs[$k] = $v;
+	    }
+		$XHPROF_ROOT = $this->_configs['XHPROF_ROOT'];
+		include_once $XHPROF_ROOT . "/xhprof_lib/utils/xhprof_lib.php";
+		include_once $XHPROF_ROOT . "/xhprof_lib/utils/xhprof_runs.php";
+		
+		xhprof_enable(XHPROF_FLAGS_CPU + XHPROF_FLAGS_MEMORY);
+	}
+/**
+ * beforeRender Callback
+ *
+ * @return array
+ **/
+	function beforeRender(&$controller) {
+		$xhprof_data = xhprof_disable();
+		$saveInfo = $this->saveProf($xhprof_data);
+		$profiled = $this->_getProfData($xhprof_data);
+		return array(
+			'link' => $saveInfo['link'],
+			'data' => $profiled['symbol_table'],
+			'sum' => $profiled['totals'],
+		);
+	}
+/**
+ * save plofiled data into file
+ * 
+ * @return array
+ */
+	function saveProf($xhprof_data)
+	{
+		$XHPROF_SOURCE_NAME = $this->_configs['XHPROF_SOURCE_NAME'];
+		$xhprof_runs = new XHProfRuns_Default();
+		$run_id = $xhprof_runs->save_run($xhprof_data, $XHPROF_SOURCE_NAME);
+		return array(
+		    'id'    => $run_id,
+		    'key'   =>  $XHPROF_SOURCE_NAME,
+		    'link'  => "<a href=\"".$this->_configs['XHPROF_VIEWER_DOMAIN']."/index.php?run=$run_id&source=$XHPROF_SOURCE_NAME\" target=\"_blank\">xhprof Result</a>\n"
+		    );
+	}
+/**
+ * profiled data
+ * 
+ * @return array
+ */
+	function _getProfData($xhprof_data) {
+		if (!$xhprof_data) {
+			return array('to'=> null,'sum'=>null);
+		}
+		
+		global $display_calls; // must require for xhprof library
+		$display_calls = true;
+		
+		$totals = array();
+		$symbol_tab = xhprof_compute_flat_info($xhprof_data, $totals);
+        
+       $flat_data = array();
+       foreach ($symbol_tab as $symbol => $info) {
+            $tmp = $info;
+            $tmp["fn"] = $symbol;
+            $flat_data[] = $tmp;
+        }
+       usort($flat_data, 'XhprofPanel::sort_by');
+		
+		$to = $flat_data;
+		foreach($flat_data as $name => $inf) {
+			foreach($totals as $k => $v) {
+			    if(!array_key_exists($k, $inf)) {
+			        continue;
+		        }
+			    if($inf[$k]>0) {
+			        if (isset($totals[$k]) and $totals[$k]>0) {
+				        $to[$name]['p_'.$k] = (round(($inf[$k]/$totals[$k])*100,1)).'%';
+				    }
+			    } else {
+				    $to[$name]['p_'.$k] = '0%';
+			    }
+			}
+		}
+		return array('symbol_table' => $to, 'totals' => $totals);
+	}
+/**
+ * sort function (called statically)
+ * 
+ * @return int
+ */
+	function sort_by($a, $b) {
+	    $l = $a[$this->_configs['sortBy']];
+	    $r = $b[$this->_configs['sortBy']];
+	    if ($l == $r) {
+	        return 0;
+       }
+      return ($l > $r) ? -1 : 1;
 	}
 }
 
